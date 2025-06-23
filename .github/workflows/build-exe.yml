@@ -1,0 +1,145 @@
+name: Build EXE
+
+# 触发条件
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Python环境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: 构建EXE文件
+      run: |
+        # 使用已有的spec文件构建
+        pyinstaller soul_launcher.spec
+        
+    - name: 创建发布包
+      run: |
+        # 创建发布目录
+        mkdir release
+        
+        # 复制exe文件
+        copy "dist\Soul Launcher.exe" release\
+        
+        # 复制必要的配置文件和目录
+        if exist configs mkdir release\configs
+        if exist configs\* copy configs\* release\configs\
+        
+        # 复制样式文件
+        mkdir release\src\common
+        copy src\common\styles.css release\src\common\
+        
+        # 创建README
+        echo Soul Launcher - 游戏服务器管理工具 > release\README.txt
+        echo. >> release\README.txt
+        echo 使用说明： >> release\README.txt
+        echo 1. 运行 Soul Launcher.exe >> release\README.txt
+        echo 2. 在路径设置中配置服务器路径 >> release\README.txt
+        echo 3. 配置服务器参数后即可启动服务器 >> release\README.txt
+        
+    - name: 压缩发布包
+      run: |
+        # 使用PowerShell压缩文件
+        Compress-Archive -Path release\* -DestinationPath "Soul-Launcher-${{ github.ref_name }}.zip"
+        
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: soul-launcher-exe
+        path: |
+          Soul-Launcher-*.zip
+          dist/Soul Launcher.exe
+        retention-days: 30
+        
+    # 如果是标签推送，创建GitHub Release
+    - name: 创建Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          Soul-Launcher-*.zip
+          dist/Soul Launcher.exe
+        body: |
+          ## Soul Launcher ${{ github.ref_name }}
+          
+          ### 新功能
+          - 自动构建的EXE版本
+          - 包含完整的配置文件和样式
+          
+          ### 使用方法
+          1. 下载 `Soul-Launcher-${{ github.ref_name }}.zip` 并解压
+          2. 运行 `Soul Launcher.exe`
+          3. 按照README.txt中的说明进行配置
+          
+          ### 系统要求
+          - Windows 10/11
+          - .NET Framework 4.7.2 或更高版本
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+  # 可选：构建多平台版本
+  build-cross-platform:
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            executable: Soul Launcher.exe
+            artifact_name: soul-launcher-windows
+          - os: ubuntu-latest
+            executable: soul_launcher
+            artifact_name: soul-launcher-linux
+          - os: macos-latest
+            executable: soul_launcher
+            artifact_name: soul-launcher-macos
+            
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Python环境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: 构建可执行文件
+      run: |
+        pyinstaller soul_launcher.spec
+        
+    - name: 上传跨平台构建产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.executable }}
+        retention-days: 30

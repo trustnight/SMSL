@@ -1,0 +1,63 @@
+name: Quick Build EXE
+
+# 简化的快速构建流程
+on:
+  workflow_dispatch:  # 仅手动触发
+    inputs:
+      version:
+        description: '版本号 (例如: v1.0.0)'
+        required: false
+        default: 'latest'
+        type: string
+
+jobs:
+  quick-build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        
+    - name: 安装依赖和PyInstaller
+      run: |
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: 使用spec文件构建EXE
+      run: |
+        pyinstaller soul_launcher.spec --clean --noconfirm
+        
+    - name: 验证构建结果
+      run: |
+        if (Test-Path "dist\Soul Launcher.exe") {
+          Write-Host "✅ EXE文件构建成功"
+          $fileSize = (Get-Item "dist\Soul Launcher.exe").Length / 1MB
+          Write-Host "📦 文件大小: $([math]::Round($fileSize, 2)) MB"
+        } else {
+          Write-Host "❌ EXE文件构建失败"
+          exit 1
+        }
+        
+    - name: 上传EXE文件
+      uses: actions/upload-artifact@v3
+      with:
+        name: soul-launcher-${{ inputs.version }}
+        path: dist/Soul Launcher.exe
+        retention-days: 7
+        
+    - name: 构建摘要
+      run: |
+        echo "## 🎉 构建完成" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **版本**: ${{ inputs.version }}" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **构建时间**: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **文件名**: Soul Launcher.exe" >> $env:GITHUB_STEP_SUMMARY
+        echo "" >> $env:GITHUB_STEP_SUMMARY
+        echo "### 📥 下载方式" >> $env:GITHUB_STEP_SUMMARY
+        echo "在Actions页面的Artifacts部分下载构建好的EXE文件" >> $env:GITHUB_STEP_SUMMARY
