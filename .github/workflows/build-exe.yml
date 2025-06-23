@@ -89,14 +89,14 @@ jobs:
     - name: 压缩发布包
       run: |
         # 使用PowerShell压缩文件
-        Compress-Archive -Path release\* -DestinationPath "Soul-Launcher-${{ github.ref_name }}.zip"
+        Compress-Archive -Path release\* -DestinationPath "SoulMask-Server-Launcher-${{ github.ref_name }}.zip"
         
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
         name: soul-launcher-exe
         path: |
-          Soul-Launcher-*.zip
+          SoulMask-Server-Launcher-*.zip
           dist/SoulMask Server Launcher.exe
         retention-days: 30
         
@@ -106,7 +106,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          Soul-Launcher-*.zip
+          SoulMask-Server-Launcher-*.zip
           dist/SoulMask Server Launcher.exe
         body: |
           ## SoulMask Server Launcher ${{ github.ref_name }}
@@ -116,7 +116,7 @@ jobs:
           - 包含完整的配置文件和样式
           
           ### 使用方法
-          1. 下载 `Soul-Launcher-${{ github.ref_name }}.zip` 并解压
+          1. 下载 `SoulMask-Server-Launcher-${{ github.ref_name }}.zip` 并解压
           2. 运行 `SoulMask Server Launcher.exe`
           3. 按照README.txt中的说明进行配置
           
