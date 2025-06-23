@@ -36,26 +36,30 @@ jobs:
     - name: 创建发布包
       run: |
         # 创建发布目录
-        mkdir release
+        New-Item -ItemType Directory -Path release -Force
         
         # 复制exe文件
-        copy "dist\Soul Launcher.exe" release\
+        Copy-Item "dist\Soul Launcher.exe" release\
         
         # 复制必要的配置文件和目录
-        if exist configs mkdir release\configs
-        if exist configs\* copy configs\* release\configs\
+        if (Test-Path configs) {
+            New-Item -ItemType Directory -Path release\configs -Force
+            Copy-Item configs\* release\configs\ -Recurse
+        }
         
         # 复制样式文件
-        mkdir release\src\common
-        copy src\common\styles.css release\src\common\
+        New-Item -ItemType Directory -Path release\src\common -Force
+        Copy-Item src\common\styles.css release\src\common\
         
         # 创建README
-        echo Soul Launcher - 游戏服务器管理工具 > release\README.txt
-        echo. >> release\README.txt
-        echo 使用说明： >> release\README.txt
-        echo 1. 运行 Soul Launcher.exe >> release\README.txt
-        echo 2. 在路径设置中配置服务器路径 >> release\README.txt
-        echo 3. 配置服务器参数后即可启动服务器 >> release\README.txt
+        @"
+        Soul Launcher - 游戏服务器管理工具
+
+        使用说明：
+        1. 运行 Soul Launcher.exe
+        2. 在路径设置中配置服务器路径
+        3. 配置服务器参数后即可启动服务器
+        "@ | Out-File -FilePath release\README.txt -Encoding UTF8
         
     - name: 压缩发布包
       run: |
