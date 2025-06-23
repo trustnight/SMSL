@@ -33,13 +33,29 @@ jobs:
         # 使用已有的spec文件构建
         pyinstaller soul_launcher.spec
         
+        # 验证构建结果
+        if (Test-Path "dist\Soul Launcher.exe") {
+            Write-Host "✅ EXE 文件构建成功: dist\Soul Launcher.exe"
+            Get-Item "dist\Soul Launcher.exe" | Select-Object Name, Length, LastWriteTime
+        } else {
+            Write-Error "❌ EXE 文件构建失败，找不到输出文件"
+            Write-Host "当前 dist 目录内容:"
+            if (Test-Path "dist") { Get-ChildItem dist -Recurse } else { Write-Host "dist 目录不存在" }
+            exit 1
+        }
+        
     - name: 创建发布包
       run: |
         # 创建发布目录
         New-Item -ItemType Directory -Path release -Force
         
         # 复制exe文件
-        Copy-Item "dist\Soul Launcher.exe" release\
+        if (Test-Path "dist\Soul Launcher.exe") {
+            Copy-Item "dist\Soul Launcher.exe" release\
+        } else {
+            Write-Error "找不到构建的 EXE 文件: dist\Soul Launcher.exe"
+            exit 1
+        }
         
         # 复制必要的配置文件和目录
         if (Test-Path configs) {
@@ -48,8 +64,12 @@ jobs:
         }
         
         # 复制样式文件
-        New-Item -ItemType Directory -Path release\src\common -Force
-        Copy-Item src\common\styles.css release\src\common\
+        if (Test-Path "src\common\styles.css") {
+            New-Item -ItemType Directory -Path release\src\common -Force
+            Copy-Item src\common\styles.css release\src\common\
+        } else {
+            Write-Warning "样式文件不存在: src\common\styles.css，跳过复制"
+        }
         
         # 创建README
         @"
