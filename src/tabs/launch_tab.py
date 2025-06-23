@@ -22,6 +22,7 @@ class LaunchTab(QWidget):
         super().__init__(parent)
         self.main_window = main_window
         self.setup_ui()
+        self.connect_signals()
     
     def setup_ui(self):
         """设置用户界面"""
@@ -60,12 +61,28 @@ class LaunchTab(QWidget):
         self.restart_button.setEnabled(False)
         buttons_layout.addWidget(self.restart_button)
         
+        # 重新加载按钮
+        # self.reload_button = QPushButton("  重新加载  ")
+        # self.reload_button.setObjectName("reload_button")
+        # self.reload_button.clicked.connect(self.reload_server_status)
+        # self.reload_button.setToolTip("重新检测服务器进程状态")
+        # buttons_layout.addWidget(self.reload_button)
+        
         # GUI流式输出开关
         self.gui_streaming_checkbox = QCheckBox("GUI显示服务器日志")
         self.gui_streaming_checkbox.setToolTip("开启后在GUI中实时显示服务器日志，关闭后仅保存到文件")
         self.gui_streaming_checkbox.setChecked(False)  # 默认关闭
         self.gui_streaming_checkbox.stateChanged.connect(self.on_gui_streaming_changed)
         buttons_layout.addWidget(self.gui_streaming_checkbox)
+        
+
+        
+        # RCON自动连接开关
+        self.auto_rcon_checkbox = QCheckBox("服务器启动后自动连接RCON")
+        self.auto_rcon_checkbox.setToolTip("开启后，服务器完全启动时将自动连接RCON")
+        self.auto_rcon_checkbox.setChecked(False)  # 默认关闭
+        self.auto_rcon_checkbox.stateChanged.connect(self.on_auto_rcon_changed)
+        buttons_layout.addWidget(self.auto_rcon_checkbox)
         
         buttons_layout.addStretch()
         
@@ -169,7 +186,7 @@ class LaunchTab(QWidget):
         
         uptime_title = QLabel("运行时间:")
         uptime_title.setStyleSheet("font-weight: bold; color: #7b1fa2; background: transparent; border: none;")
-        self.uptime_label = QLabel("00:00:00")
+        self.uptime_label = QLabel("--:--:--")
         self.uptime_label.setStyleSheet("font-weight: bold; background: transparent; border: none;")
         
         uptime_container_layout.addWidget(uptime_title)
@@ -281,6 +298,26 @@ class LaunchTab(QWidget):
         if self.main_window:
             self.main_window.restart_server()
     
+    def reload_server_status(self):
+        """重新加载服务器状态"""
+        if self.main_window:
+            self.main_window.reload_server_status()
+    
+    def connect_signals(self):
+        """连接信号"""
+        if self.main_window and hasattr(self.main_window, 'server_manager'):
+            # 连接互斥状态变化信号
+            self.main_window.server_manager.gui_streaming_changed.connect(self.on_gui_streaming_signal_changed)
+    
+
+    
+    def on_gui_streaming_signal_changed(self, enabled):
+        """响应GUI流式输出状态变化信号"""
+        # 阻止信号循环触发
+        self.gui_streaming_checkbox.blockSignals(True)
+        self.gui_streaming_checkbox.setChecked(enabled)
+        self.gui_streaming_checkbox.blockSignals(False)
+    
     def clear_logs(self):
         """清除日志"""
         if self.main_window:
@@ -301,6 +338,8 @@ class LaunchTab(QWidget):
         if self.main_window and hasattr(self.main_window, 'server_manager'):
             enabled = state == 2  # Qt.CheckState.Checked
             self.main_window.server_manager.set_gui_streaming(enabled)
+    
+
     
     def update_status(self, status):
         """更新服务器状态"""
@@ -377,9 +416,16 @@ class LaunchTab(QWidget):
     
     def update_mod_status(self, mod_name, mod_id):
         """更新mod加载状态"""
-        # 清除初始状态标签
-        if hasattr(self, 'mod_status_label') and self.mod_status_label.text() == "等待服务器启动...":
-            self.mod_status_label.hide()
+        # 清除初始状态标签（添加安全检查）
+        try:
+            if (hasattr(self, 'mod_status_label') and 
+                self.mod_status_label is not None and 
+                not self.mod_status_label.isHidden() and
+                self.mod_status_label.text() == "等待服务器启动..."):
+                self.mod_status_label.hide()
+        except RuntimeError:
+            # QLabel已被删除，忽略错误
+            pass
         
         # 创建mod状态标签
         mod_label = QLabel(f"{mod_name}")
@@ -407,11 +453,10 @@ class LaunchTab(QWidget):
             if child.widget():
                 child.widget().deleteLater()
         
-        # 显示初始状态标签
-        if hasattr(self, 'mod_status_label'):
-            self.mod_status_label.setText("等待服务器启动...")
-            self.mod_status_label.show()
-            self.mod_status_layout.addWidget(self.mod_status_label)
+        # 重新创建初始状态标签（因为上面的清除操作可能已经删除了它）
+        self.mod_status_label = QLabel("等待服务器启动...")
+        self.mod_status_label.setStyleSheet("font-weight: bold; color: #e65100; background: transparent; border: none; font-size: 10pt;")
+        self.mod_status_layout.addWidget(self.mod_status_label)
     
     def update_players_table(self, players_data):
         """更新玩家显示"""
@@ -454,3 +499,11 @@ class LaunchTab(QWidget):
         
         html_content += "</div>"
         self.players_display.setHtml(html_content)
+    
+    def on_auto_rcon_changed(self, state):
+        """处理RCON自动连接开关状态变化"""
+        if self.main_window and hasattr(self.main_window, 'server_manager'):
+            enabled = state == 2  # Qt.CheckState.Checked
+            self.main_window.server_manager.set_auto_rcon_enabled(enabled)
+        else:
+            print("无法访问服务器管理器")

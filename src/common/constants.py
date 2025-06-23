@@ -146,13 +146,13 @@ DEFAULT_SERVER_CONFIG = {
     "rcon_enabled": True,  # 是否启用RCON
     "rcon_addr": "127.0.0.1",  # RCON地址
     "rcon_port": 25575,  # RCON端口
-    "rcon_password": "admin",  # RCON密码
+    "rcon_password": "",  # RCON密码
     "extra_args": ""  # 额外启动参数
 }
 
 # RCON相关常量
 DEFAULT_RCON_PORT = 25575
-DEFAULT_RCON_PASSWORD = "admin"
+DEFAULT_RCON_PASSWORD = ""
 RCON_TIMEOUT = 10  # RCON连接超时时间（秒）
 
 # 日志相关

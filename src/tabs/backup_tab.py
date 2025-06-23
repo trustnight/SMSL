@@ -58,14 +58,24 @@ class BackupTab(QWidget):
         interval_label = QLabel("备份间隔:")
         interval_label.setMinimumWidth(120)
         self.backup_interval_spin = QSpinBox()
-        self.backup_interval_spin.setRange(5, 1440)  # 5分钟到24小时
+        self.backup_interval_spin.setRange(1, 1440)  # 1分钟到24小时
         self.backup_interval_spin.setValue(DEFAULT_BACKUP_INTERVAL)
-        self.backup_interval_spin.setSuffix(" 分钟")
-        self.backup_interval_spin.setMinimumWidth(120)
-        self.backup_interval_spin.setMaximumWidth(120)
+        self.backup_interval_spin.setFixedWidth(80)
+        
+        # 添加醒目的单位标签在输入框右侧
+        interval_unit_label = QLabel("分钟")
+        interval_unit_label.setStyleSheet("""
+            QLabel {
+                color: #007acc;
+                font-weight: bold;
+                font-size: 12px;
+                margin-left: 5px;
+            }
+        """)
         
         interval_layout.addWidget(interval_label)
         interval_layout.addWidget(self.backup_interval_spin)
+        interval_layout.addWidget(interval_unit_label)
         interval_layout.addStretch()
         
         auto_backup_layout.addWidget(interval_frame)
@@ -80,12 +90,22 @@ class BackupTab(QWidget):
         self.keep_backups_spin = QSpinBox()
         self.keep_backups_spin.setRange(1, 100)
         self.keep_backups_spin.setValue(DEFAULT_KEEP_BACKUPS_COUNT)
-        self.keep_backups_spin.setSuffix(" 个")
-        self.keep_backups_spin.setMinimumWidth(120)
-        self.keep_backups_spin.setMaximumWidth(120)
+        self.keep_backups_spin.setFixedWidth(80)
+        
+        # 添加醒目的单位标签在输入框右侧
+        keep_unit_label = QLabel("份")
+        keep_unit_label.setStyleSheet("""
+            QLabel {
+                color: #007acc;
+                font-weight: bold;
+                font-size: 12px;
+                margin-left: 5px;
+            }
+        """)
         
         keep_layout.addWidget(keep_label)
         keep_layout.addWidget(self.keep_backups_spin)
+        keep_layout.addWidget(keep_unit_label)
         keep_layout.addStretch()
         
         auto_backup_layout.addWidget(keep_frame)
@@ -109,6 +129,8 @@ class BackupTab(QWidget):
         
         # 备份列表控件
         self.backup_list = QListWidget()
+        # 启用多选模式，支持Ctrl和Shift批量选择
+        self.backup_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.backup_list.itemSelectionChanged.connect(self.on_backup_selected)
         backup_list_layout.addWidget(self.backup_list)
         
@@ -211,17 +233,34 @@ class BackupTab(QWidget):
             self.main_window.restore_backup(backup_name)
     
     def delete_backup(self):
-        """删除备份"""
-        current_item = self.backup_list.currentItem()
-        if current_item and self.main_window:
-            backup_name = current_item.text().split(' - ')[0]
-            self.main_window.delete_backup(backup_name)
+        """删除备份（支持批量删除）"""
+        selected_items = self.backup_list.selectedItems()
+        if selected_items and self.main_window:
+            if len(selected_items) == 1:
+                # 单个删除
+                backup_name = selected_items[0].text().split(' - ')[0]
+                self.main_window.delete_backup(backup_name)
+            else:
+                # 批量删除
+                backup_names = [item.text().split(' - ')[0] for item in selected_items]
+                self.main_window.delete_multiple_backups(backup_names)
     
     def on_backup_selected(self):
         """备份选择改变"""
-        has_selection = bool(self.backup_list.currentItem())
-        self.restore_backup_btn.setEnabled(has_selection)
+        selected_items = self.backup_list.selectedItems()
+        has_selection = len(selected_items) > 0
+        
+        # 恢复备份只支持单选
+        self.restore_backup_btn.setEnabled(len(selected_items) == 1)
+        
+        # 删除备份支持多选
         self.delete_backup_btn.setEnabled(has_selection)
+        
+        # 更新按钮文本以反映选择数量
+        if len(selected_items) > 1:
+            self.delete_backup_btn.setText(f"删除备份 ({len(selected_items)}个)")
+        else:
+            self.delete_backup_btn.setText("删除备份")
     
     def clear_backup_log(self):
         """清除备份日志"""

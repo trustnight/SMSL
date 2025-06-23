@@ -225,6 +225,12 @@ class SoulServerLauncher(QMainWindow):
         # 连接mod加载信号
         self.server_manager.mod_loaded.connect(self.on_mod_loaded)
         
+        # 创建定时器定期更新服务器状态（运行时间和内存）
+        from PySide6.QtCore import QTimer
+        self.status_update_timer = QTimer()
+        self.status_update_timer.timeout.connect(self.update_server_status_display)
+        self.status_update_timer.start(1000)  # 每秒更新一次
+        
         # 设置状态栏
         self.status_label = QLabel("就绪")
         self.statusBar().addWidget(self.status_label)
@@ -265,6 +271,15 @@ class SoulServerLauncher(QMainWindow):
             self.config_tab.load_config(config)
             self.backup_tab.load_backup_settings(config)
             
+            # 将备份设置应用到备份管理器
+            if config.get('auto_backup', False):
+                self.backup_manager.set_auto_backup(
+                    enabled=True,
+                    interval_minutes=config.get('backup_interval', 30)
+                )
+            else:
+                self.backup_manager.set_auto_backup(enabled=False)
+            
             # 设置服务器管理器的完整配置
             self.server_manager.set_server_config(config)
             
@@ -291,8 +306,23 @@ class SoulServerLauncher(QMainWindow):
         try:
             current_config = self.config_manager.load_config()
             current_config.update(settings)
-            self.config_manager.save_config(current_config)
-            QMessageBox.information(self, "成功", "备份设置保存成功！")
+            success = self.config_manager.save_config(current_config)
+            
+            if success:
+                # 立即将设置应用到备份管理器
+                if settings.get('auto_backup', False):
+                    self.backup_manager.set_auto_backup(
+                        enabled=True,
+                        interval_minutes=settings.get('backup_interval', 30)
+                    )
+                else:
+                    self.backup_manager.set_auto_backup(enabled=False)
+                
+                # 保存成功后，确保UI显示的是刚保存的值，而不是重新加载配置
+                # 不调用load_config，避免UI被重置
+                QMessageBox.information(self, "成功", "备份设置保存成功！")
+            else:
+                QMessageBox.critical(self, "错误", "保存备份设置失败！")
         except Exception as e:
             error_msg = f"保存备份设置失败: {e}"
             self.log_manager.add_error(error_msg)
@@ -376,6 +406,15 @@ class SoulServerLauncher(QMainWindow):
             self.log_manager.add_error(error_msg)
             QMessageBox.critical(self, "错误", error_msg)
     
+    def reload_server_status(self):
+        """重新加载服务器状态"""
+        try:
+            self.server_manager.reload_server_status()
+        except Exception as e:
+            error_msg = f"重新加载服务器状态失败: {e}"
+            self.log_manager.add_error(error_msg)
+            QMessageBox.critical(self, "错误", error_msg)
+    
     def update_server_status(self):
         """更新服务器状态"""
         try:
@@ -400,6 +439,19 @@ class SoulServerLauncher(QMainWindow):
                     self.launch_tab.update_memory(status['memory'])
         except Exception as e:
             print(f"更新服务器状态失败: {e}")
+    
+    def update_server_status_display(self):
+        """定时更新服务器状态显示（仅在服务器运行时更新运行时间和内存）"""
+        if self.server_manager.is_running:
+            status = self.server_manager.get_server_status()
+            
+            # 更新运行时间
+            if 'uptime' in status:
+                self.launch_tab.update_uptime(status['uptime'])
+            
+            # 更新内存使用
+            if 'memory' in status:
+                self.launch_tab.update_memory(status['memory'])
     
     def auto_detect_installations(self):
         """启动时自动检测安装状态（静默检查，不输出日志）"""
@@ -455,6 +507,43 @@ class SoulServerLauncher(QMainWindow):
             error_msg = f"删除备份失败: {e}"
             self.log_manager.add_error(error_msg)
             QMessageBox.critical(self, "错误", error_msg)
+    
+    def delete_multiple_backups(self, backup_names):
+        """批量删除备份"""
+        if not backup_names:
+            return
+        
+        # 确认对话框
+        reply = QMessageBox.question(
+            self, 
+            "确认删除", 
+            f"确定要删除这 {len(backup_names)} 个备份吗？\n\n" + "\n".join(backup_names),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            success_count = 0
+            failed_backups = []
+            
+            for backup_name in backup_names:
+                try:
+                    self.backup_manager.delete_backup(backup_name)
+                    success_count += 1
+                    self.backup_tab.add_backup_log(f"删除备份: {backup_name}")
+                except Exception as e:
+                    failed_backups.append(f"{backup_name}: {e}")
+                    self.log_manager.add_error(f"删除备份失败: {backup_name} - {e}")
+            
+            # 刷新备份列表
+            self.refresh_backup_list()
+            
+            # 显示结果
+            if failed_backups:
+                error_msg = f"批量删除完成，成功: {success_count}个，失败: {len(failed_backups)}个\n\n失败详情:\n" + "\n".join(failed_backups)
+                QMessageBox.warning(self, "批量删除结果", error_msg)
+            else:
+                self.backup_tab.add_backup_log(f"批量删除成功: {success_count}个备份")
     
     def refresh_backup_list(self):
         """刷新备份列表"""
@@ -563,7 +652,7 @@ class SoulServerLauncher(QMainWindow):
         # 确保状态标签也更新
         self.launch_tab.update_status("离线")
         # 重置运行时间和内存显示到默认状态
-        self.launch_tab.update_uptime("00:00:00")
+        self.launch_tab.update_uptime("--:--:--")
         self.launch_tab.update_memory("-- MB")
         # 重置mod状态显示
         self.launch_tab.reset_mod_status()
@@ -635,6 +724,9 @@ class SoulServerLauncher(QMainWindow):
         """应用程序初始化完成"""
         # 初始化完成，但不记录日志避免创建logs目录
         # 可以在这里添加初始化完成后的逻辑
+        
+        # GUI完全初始化后，检查是否有已存在的服务器进程
+        self.server_manager._check_existing_process()
         
     def on_initialization_error(self, error_message):
         """应用程序初始化错误"""

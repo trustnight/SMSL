@@ -146,6 +146,10 @@ class BackupManager(QObject):
             
             success_msg = f"备份创建成功: {os.path.basename(backup_file)} ({size_mb:.2f} MB)"
             self.log_message.emit(success_msg)
+            
+            # 清理旧备份
+            self._cleanup_old_backups()
+            
             self.backup_finished.emit(True, success_msg)
             
         except Exception as e:
@@ -303,7 +307,51 @@ class BackupManager(QObject):
             self.log_message.emit(error_msg)
             return False
     
-
+    def _cleanup_old_backups(self):
+        """清理旧备份，保留指定数量的最新备份"""
+        try:
+            if not self.config_manager:
+                return
+                
+            # 获取保留备份数量设置
+            keep_count = self.config_manager.get_config("keep_backups_count")
+            if keep_count is None:
+                keep_count = 5  # 默认保留5个备份
+            
+            if keep_count <= 0:
+                return  # 如果设置为0或负数，不删除任何备份
+                
+            # 获取所有备份文件
+            if not os.path.exists(self.backup_dir):
+                return
+                
+            backup_files = []
+            for file in os.listdir(self.backup_dir):
+                if file.endswith('.zip'):
+                    file_path = os.path.join(self.backup_dir, file)
+                    if os.path.isfile(file_path):
+                        # 获取文件修改时间
+                        mtime = os.path.getmtime(file_path)
+                        backup_files.append((file_path, mtime))
+            
+            # 按修改时间排序，最新的在前
+            backup_files.sort(key=lambda x: x[1], reverse=True)
+            
+            # 如果备份数量超过保留数量，删除多余的
+            if len(backup_files) > keep_count:
+                files_to_delete = backup_files[keep_count:]
+                
+                for file_path, _ in files_to_delete:
+                    try:
+                        os.remove(file_path)
+                        self.log_message.emit(f"已删除旧备份: {os.path.basename(file_path)}")
+                    except Exception as e:
+                        self.log_message.emit(f"删除旧备份失败 {os.path.basename(file_path)}: {str(e)}")
+                        
+                self.log_message.emit(f"清理完成，保留最新 {keep_count} 个备份")
+                
+        except Exception as e:
+            self.log_message.emit(f"清理旧备份时出错: {str(e)}")
     
     def get_backup_dir(self):
         """获取备份目录"""

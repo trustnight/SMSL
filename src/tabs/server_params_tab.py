@@ -187,7 +187,8 @@ class ServerParamsTab(QWidget):
         rcon_password_label = QLabel("RCON密码:")
         rcon_password_label.setMinimumWidth(120)
         self.rcon_password_edit = QLineEdit()
-        self.rcon_password_edit.setText("admin")
+        self.rcon_password_edit.setText("")
+        self.rcon_password_edit.setPlaceholderText("请设置RCON密码，不设置将无法连接")
         self.rcon_password_edit.setEchoMode(QLineEdit.Password)
         
         rcon_password_layout.addWidget(rcon_password_label)
@@ -289,7 +290,7 @@ class ServerParamsTab(QWidget):
         self.rcon_enabled_checkbox.setChecked(config.get('rcon_enabled', True))
         self.rcon_addr_edit.setText(config.get('rcon_addr', '127.0.0.1'))
         self.rcon_port_spin.setValue(config.get('rcon_port', 25575))
-        self.rcon_password_edit.setText(config.get('rcon_password', 'admin'))
+        self.rcon_password_edit.setText(config.get('rcon_password', ''))
         self.extra_args_edit.setText(config.get('extra_args', ''))
         
         # 更新RCON设置状态

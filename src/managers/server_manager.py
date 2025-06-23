@@ -28,6 +28,8 @@ class ServerManager(QObject):
     rcon_error = Signal(str)      # RCON错误信号
     players_updated = Signal(str) # 玩家数量更新信号
     mod_loaded = Signal(str, str) # mod加载信号(mod_name, mod_id)
+
+    gui_streaming_changed = Signal(bool)   # GUI流式输出状态变化信号
     
     def __init__(self, config_manager=None):
         super().__init__()
@@ -51,8 +53,11 @@ class ServerManager(QObject):
         # 服务器日志显示开关
         self.show_server_logs = False  # 默认关闭服务器日志显示
         
-        # 移除初始化时的进程检查，避免在启动时立即设置为离线状态
-        # self._check_existing_process()
+        # RCON自动连接开关
+        self.auto_rcon_enabled = False  # 默认关闭RCON自动连接
+        
+        # 注意：不在初始化时检查已有进程，等待GUI完全加载后再检查
+        # self._check_existing_process()  # 移到GUI初始化完成后调用
     
     def set_server_path(self, path):
         """设置服务器路径"""
@@ -70,6 +75,7 @@ class ServerManager(QObject):
         self.enable_gui_streaming = enabled
         if enabled:
             self.log_message.emit("✅ GUI流式输出已开启")
+
         else:
             self.log_message.emit("❌ GUI流式输出已关闭，日志仅保存到文件")
     
@@ -86,6 +92,8 @@ class ServerManager(QObject):
             # 如果服务器没有运行，可以停止日志监控
             if not self.is_running:
                 self.log_monitor_running = False
+    
+
     
     def start_server(self):
         """启动服务器"""
@@ -116,53 +124,49 @@ class ServerManager(QObject):
                 self.log_message.emit(f"错误: 服务器可执行文件不存在: {server_exe}")
                 return False
             
-            # 构建启动命令 - 直接使用WSServer.exe
+            # 构建启动命令 - 按照用户正常工作的命令顺序
             cmd = [
                 server_exe,
                 "Level01_Main",
                 "-server",
-                f"-port={self.server_config.get('port', DEFAULT_SERVER_CONFIG['port'])}",
-                f"-maxplayers={self.server_config.get('max_players', DEFAULT_SERVER_CONFIG['max_players'])}",
-                f"-servername=\"{self.server_config.get('server_name', DEFAULT_SERVER_CONFIG['server_name'])}\"",
                 "-log",
                 "-UTF8Output",
                 f"-MULTIHOME={self.server_config.get('multihome', DEFAULT_SERVER_CONFIG['multihome'])}",
                 "-EchoPort=18888",
-                "-forcepassthrough"
+                "-forcepassthrough",
+                f"-PORT={self.server_config.get('port', DEFAULT_SERVER_CONFIG['port'])}",
+                f"-MaxPlayers={self.server_config.get('max_players', DEFAULT_SERVER_CONFIG['max_players'])}",
+                f"-SteamServerName=\"{self.server_config.get('server_name', DEFAULT_SERVER_CONFIG['server_name'])}\"",
+                "-QueryPort=27015"
             ]
             
             # 添加游戏模式参数
             game_mode = self.server_config.get('game_mode', DEFAULT_SERVER_CONFIG['game_mode'])
             cmd.append(f"-{game_mode}")
             
-            # 添加RCON参数
-            if self.server_config.get("rcon_enabled", DEFAULT_SERVER_CONFIG['rcon_enabled']):
-                cmd.append(f"-rconaddr={self.server_config.get('rcon_addr', DEFAULT_SERVER_CONFIG['rcon_addr'])}")
-                cmd.append(f"-rconport={self.server_config.get('rcon_port', DEFAULT_SERVER_CONFIG['rcon_port'])}")
-                cmd.append(f"-rconpsw={self.server_config.get('rcon_password', DEFAULT_SERVER_CONFIG['rcon_password'])}")
-            
-            # 添加额外启动参数
+            # 添加额外启动参数（包含gamedistindex和mod等重要参数）
             extra_args = self.server_config.get('extra_args', '')
             if extra_args:
                 # 分割额外参数并添加到命令行
                 for arg in extra_args.split():
                     cmd.append(arg)
             
+            # 添加RCON参数（放在最后，与用户命令顺序一致）
+            if self.server_config.get("rcon_enabled", DEFAULT_SERVER_CONFIG['rcon_enabled']):
+                cmd.append(f"-rconpsw={self.server_config.get('rcon_password', DEFAULT_SERVER_CONFIG['rcon_password'])}")
+                cmd.append(f"-rconport={self.server_config.get('rcon_port', DEFAULT_SERVER_CONFIG['rcon_port'])}")
+                cmd.append(f"-rconaddr={self.server_config.get('rcon_addr', DEFAULT_SERVER_CONFIG['rcon_addr'])}")
+            
             # 打印完整启动命令到服务器日志区
             cmd_str = ' '.join(f'"{arg}"' if ' ' in arg else arg for arg in cmd)
             self.log_message.emit(f"启动命令: {cmd_str}")
             
-            # 启动服务器进程（流式输出到日志区）
+            # 启动服务器进程
             self.server_process = subprocess.Popen(
                 cmd,
                 cwd=self.server_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=0,  # 无缓冲，实时输出
-                universal_newlines=True,
-                encoding='utf-8',
-                errors='replace',  # 遇到编码错误时替换为占位符
+                stdout=None,
+                stderr=None,
                 creationflags=subprocess.CREATE_NO_WINDOW  # 不显示cmd窗口
             )
             
@@ -178,10 +182,8 @@ class ServerManager(QObject):
             threading.Timer(5.0, self._find_real_server_process).start()
             self.log_message.emit("✅ WSServer.exe进程启动成功，等待WSServer-Win64-Shipping.exe进程...")
             
-            # 启动流式输出监控线程
-            threading.Thread(target=self._stream_server_output, daemon=True).start()
-            
-            # 注释：已移除日志文件监控，因为stdout已能正常捕获服务器输出
+            # 启动进程监控线程
+            threading.Thread(target=self._monitor_process_status, daemon=True).start()
             
             return True
             
@@ -191,40 +193,14 @@ class ServerManager(QObject):
             return False
     
     def stop_server(self):
-        """停止服务器"""
-        # 导入psutil模块
-        try:
-            import psutil
-        except ImportError:
-            self.log_message.emit("警告: 未安装psutil模块，部分进程管理功能可能受限")
-            
-        if not self.is_running or not self.server_process:
-            self.log_message.emit("提示: 服务器未运行，重置到初始状态")
-            # 直接重置到初始状态
-            self.is_running = False
-            self.server_process = None
-            # 清除启动标志
-            if hasattr(self, 'startup_in_progress'):
-                self.startup_in_progress = False
-            # 停止日志监控
-            if hasattr(self, 'log_monitor_running'):
-                self.log_monitor_running = False
-            # 断开RCON连接
-            if self.is_rcon_connected:
-                self.disconnect_rcon()
-            # 发送状态更新信号
-            self.status_changed.emit(False)
-            self.log_message.emit("✅ 已重置到初始状态")
-            self.server_stopped.emit()
-            return True
-            
+        """停止服务器 - 直接使用RCON关闭，不分状态"""
+        self.log_message.emit("正在通过RCON关闭服务器...")
         # 在后台线程中执行关闭操作，避免GUI无响应
-        self.log_message.emit("正在关闭服务器，请稍候...")
         threading.Thread(target=self._stop_server_async, daemon=True).start()
         return True
         
     def _stop_server_async(self):
-        """异步停止服务器，避免GUI阻塞"""
+        """异步停止服务器，避免GUI阻塞 - 统一使用RCON关闭"""
         try:
             import psutil
         except ImportError:
@@ -236,187 +212,204 @@ class ServerManager(QObject):
             self.log_monitor_running = False
             self.log_message.emit("📋 停止日志文件监控")
         
-        # 尝试通过RCON发送关闭命令
-        if self.is_rcon_connected and self.rcon_client:
-            try:
-                self.log_message.emit("正在通过RCON发送关闭命令...")
-                # 确保使用正确的RCON命令格式
-                result = self.execute_rcon_command("close 10")
-                self.log_message.emit(f"RCON关闭命令结果: {result}")
-                
-                # 等待服务器进程结束
-                self.log_message.emit("等待服务器进程结束...")
-                try:
-                    # 最多等待60秒
-                    for _ in range(60):
-                        # 使用psutil检查WSServer-Win64-Shipping.exe进程
-                        if not self._check_server_status_with_psutil():
-                            # 进程已结束
-                            break
-                        time.sleep(1)
-                    else:
-                        # 超时，进程仍在运行
-                        self.log_message.emit("服务器未在预期时间内关闭，尝试强制终止...")
-                        self._force_kill_server_processes()
-                        
-                    self.is_running = False
-                    self.server_process = None
-                    # 清除启动标志
-                    if hasattr(self, 'startup_in_progress'):
-                        self.startup_in_progress = False
-                    # 断开RCON连接
-                    self.disconnect_rcon()
-                    self.log_message.emit("🔍 [离线判断] 通过RCON成功关闭服务器，进程已正常结束")
-                    self.status_changed.emit(False)
-                    self.log_message.emit("✅ 服务器进程已停止")
-                    self.server_stopped.emit()
-                    return True
-                    
-                except Exception as e:
-                    self.log_message.emit(f"错误: 等待服务器关闭时出错: {str(e)}")
-                    self.status_changed.emit(True)
-                    return False
-            except Exception as e:
-                self.log_message.emit(f"错误: 通过RCON关闭服务器时出错: {str(e)}")
-                self.status_changed.emit(True)
-                return False
-        else:
+        # 检查RCON连接状态，如果未连接则尝试连接
+        if not self.is_rcon_connected or not self.rcon_client:
             self.log_message.emit("RCON未连接，尝试连接RCON...")
-            # 尝试连接RCON
-            if self.connect_rcon():
-                self.log_message.emit("RCON连接成功，尝试通过RCON关闭服务器...")
-                try:
-                    # 发送关闭命令 - 使用正确的关闭命令格式
-                    result = self.execute_rcon_command("close 10")
-                    self.log_message.emit(f"RCON关闭命令执行结果: {result}")
-                    
-                    # 等待服务器进程结束
-                    try:
-                        # 兼容subprocess.Popen和psutil.Process对象
-                        if hasattr(self.server_process, 'poll'):
-                            # subprocess.Popen对象
-                            for _ in range(30):  # 最多等待30秒
-                                if self.server_process.poll() is not None:
-                                    break
-                                time.sleep(1)
-                        elif hasattr(self.server_process, 'is_running'):
-                            # psutil.Process对象
-                            for _ in range(30):  # 最多等待30秒
-                                try:
-                                    if not self.server_process.is_running():
-                                        break
-                                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                    break
-                                time.sleep(1)
-                        
-                        # 检查服务器是否已停止
-                        if (hasattr(self.server_process, 'poll') and self.server_process.poll() is not None) or \
-                           (hasattr(self.server_process, 'is_running') and not self.server_process.is_running()):
-                            self.is_running = False
-                            self.server_process = None
-                            # 断开RCON连接
-                            self.disconnect_rcon()
-                            self.log_message.emit("🔍 [离线判断] 通过RCON关闭服务器后，进程已正常结束")
-                            self.status_changed.emit(False)
-                            self.log_message.emit("✅ 服务器进程已停止")
-                            self.server_stopped.emit()
-                            return True
-                        else:
-                            self.log_message.emit("错误: RCON关闭命令已发送，但服务器未停止")
-                            self.status_changed.emit(True)
-                            return False
-                    except Exception as e:
-                        self.log_message.emit(f"错误: 等待服务器关闭时出错: {str(e)}")
-                        self.status_changed.emit(True)
-                        return False
-                except Exception as e:
-                    self.log_message.emit(f"错误: 通过RCON关闭服务器时出错: {str(e)}")
-                    self.status_changed.emit(True)
-                    return False
-            else:
-                self.log_message.emit("错误: RCON连接失败，无法关闭服务器")
-                self.status_changed.emit(True)
+            if not self.connect_rcon():
+                self.log_message.emit("❌ RCON连接失败，无法通过RCON关闭服务器")
+                self._reset_server_state()
                 return False
+            self.log_message.emit("✅ RCON连接成功")
         
-        # 如果RCON关闭失败或未连接RCON，显示错误信息
-        self.log_message.emit("错误: 无法通过RCON关闭服务器，请确保RCON已正确配置并启用")
-        self.status_changed.emit(True)
-        return False
+        # 通过RCON发送关闭命令
+        try:
+            self.log_message.emit("📤 正在通过RCON发送关闭命令: close 10")
+            result = self.execute_rcon_command("close 10")
+            self.log_message.emit(f"📥 RCON关闭命令结果: {result}")
+            
+            # 等待服务器进程结束
+            self.log_message.emit("⏳ 等待服务器进程结束...")
+            for i in range(30):  # 最多等待30秒
+                if not self._check_server_status_with_psutil():
+                    # 进程已结束
+                    self.log_message.emit(f"✅ 服务器进程已在 {i+1} 秒后正常结束")
+                    break
+                time.sleep(1)
+            else:
+                # 超时，进程仍在运行
+                self.log_message.emit("⚠️ 服务器未在预期时间内关闭，可能需要手动检查")
+            
+            # 重置服务器状态
+            self._reset_server_state()
+            self.log_message.emit("🔴 服务器已停止")
+            return True
+            
+        except Exception as e:
+            self.log_message.emit(f"❌ 通过RCON关闭服务器时出错: {str(e)}")
+            self._reset_server_state()
+            return False
+    
+    def _reset_server_state(self):
+        """重置服务器状态"""
+        self.is_running = False
+        self.server_process = None
+        # 清除启动标志
+        if hasattr(self, 'startup_in_progress'):
+            self.startup_in_progress = False
+        # 断开RCON连接
+        if self.is_rcon_connected:
+            self.disconnect_rcon()
+        # 发送状态更新信号
+        self.status_changed.emit(False)
+        self.server_stopped.emit()
+    
+    def reload_server_status(self):
+        """重新加载服务器状态 - 重新检测服务器进程"""
+        self.log_message.emit("🔄 正在重新加载服务器状态...")
+        
+        # 重置当前状态
+        self.is_running = False
+        self.server_process = None
+        if hasattr(self, 'real_server_pid'):
+            self.real_server_pid = None
+        
+        # 断开RCON连接
+        if self.is_rcon_connected:
+            self.disconnect_rcon()
+        
+        # 重新检测服务器状态
+        self._check_existing_process()
+        
+        self.log_message.emit("✅ 服务器状态重新加载完成")
     
     def restart_server(self):
         """重启服务器"""
         self.log_message.emit("正在重启服务器...")
         
         # 保存当前进程ID，用于后续检查
-        old_process = None
+        old_process_pid = None
+        real_server_pid = None
+        
+        # 获取所有需要关闭的进程PID
         if self.server_process:
             try:
-                old_process = self.server_process.pid
+                old_process_pid = self.server_process.pid
             except:
-                old_process = None
+                old_process_pid = None
+                
+        if hasattr(self, 'real_server_pid') and self.real_server_pid:
+            real_server_pid = self.real_server_pid
         
-        # 停止服务器
+        # 先尝试通过RCON优雅停止
         stop_result = self.stop_server()
         if stop_result:
-            self.log_message.emit("服务器已停止，准备重新启动...")
+            self.log_message.emit("服务器已通过RCON停止，等待进程结束...")
         else:
-            self.log_message.emit("错误: 无法通过RCON停止服务器，重启失败")
-            self.status_changed.emit(True)
-            return False
+            self.log_message.emit("RCON停止失败，将强制终止进程...")
+            # 强制终止进程
+            self._force_stop_server_processes()
             
         # 只有在成功停止服务器后才继续
             
-            # 创建一个线程来等待进程结束并启动服务器
-            def wait_and_start():
-                try:
-                    # 检查原进程是否真正结束
-                    if old_process:
-                        try:
-                            import psutil
-                            # 检查原进程是否还存在
-                            for _ in range(60):  # 最多等待60秒
-                                try:
-                                    process = psutil.Process(old_process)
-                                    # 进程仍然存在，继续等待
-                                    time.sleep(1)
-                                except psutil.NoSuchProcess:
-                                    # 进程已结束
-                                    self.log_message.emit("检测到服务器进程已完全结束")
+        # 创建一个线程来等待进程结束并启动服务器
+        def wait_and_start():
+            try:
+                import psutil
+                # 等待所有相关进程结束
+                processes_to_wait = []
+                if old_process_pid:
+                    processes_to_wait.append(old_process_pid)
+                if real_server_pid and real_server_pid != old_process_pid:
+                    processes_to_wait.append(real_server_pid)
+                
+                if processes_to_wait:
+                    self.log_message.emit(f"等待进程结束: {processes_to_wait}")
+                    # 检查进程是否真正结束
+                    for _ in range(30):  # 最多等待30秒
+                        all_stopped = True
+                        for pid in processes_to_wait:
+                            try:
+                                process = psutil.Process(pid)
+                                if process.is_running():
+                                    all_stopped = False
                                     break
-                            else:
-                                self.log_message.emit("警告: 原服务器进程可能仍在运行")
-                        except ImportError:
-                            # 如果无法导入psutil，则简单等待
-                            self.log_message.emit("无法检测进程状态，等待固定时间...")
-                            time.sleep(10)
-                    
-                    # 等待5秒后启动服务器
-                    self.log_message.emit("等待5秒后启动服务器...")
-                    time.sleep(5)
-                    
-                    # 在主线程中启动服务器
-                    from PySide6.QtCore import QMetaObject, Qt
-                    QMetaObject.invokeMethod(self, "_restart_server_impl", 
-                                           Qt.QueuedConnection)
-                except Exception as e:
-                    self.log_message.emit(f"等待并启动服务器时出错: {str(e)}")
+                            except psutil.NoSuchProcess:
+                                # 进程已结束，这是我们想要的
+                                continue
+                        
+                        if all_stopped:
+                            self.log_message.emit("✅ 所有服务器进程已完全结束")
+                            break
+                        time.sleep(1)
+                    else:
+                        self.log_message.emit("⚠️ 部分进程可能仍在运行，继续启动")
+                
+                # 等待3秒后启动服务器
+                self.log_message.emit("等待3秒后重新启动服务器...")
+                time.sleep(3)
+                
+                # 在主线程中启动服务器
+                from PySide6.QtCore import QMetaObject, Qt
+                QMetaObject.invokeMethod(self, "_restart_server_impl", 
+                                       Qt.QueuedConnection)
+            except Exception as e:
+                self.log_message.emit(f"等待并启动服务器时出错: {str(e)}")
+        
+        # 启动等待线程
+        threading.Thread(target=wait_and_start, daemon=True).start()
+        return True
+    
+    def _force_stop_server_processes(self):
+        """强制终止所有服务器相关进程"""
+        try:
+            import psutil
+            terminated_processes = []
             
-            # 启动等待线程
-            threading.Thread(target=wait_and_start, daemon=True).start()
-            return True
-        return False
+            # 终止启动进程
+            if self.server_process:
+                try:
+                    self.server_process.terminate()
+                    terminated_processes.append(f"启动进程 PID: {self.server_process.pid}")
+                except:
+                    pass
+            
+            # 查找并终止所有WSServer相关进程
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if 'WSServer' in proc.info['name']:
+                        proc.terminate()
+                        terminated_processes.append(f"{proc.info['name']} PID: {proc.info['pid']}")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            
+            if terminated_processes:
+                self.log_message.emit(f"已强制终止进程: {', '.join(terminated_processes)}")
+            else:
+                self.log_message.emit("未找到需要终止的服务器进程")
+                
+            # 重置状态
+            self.is_running = False
+            self.server_process = None
+            if hasattr(self, 'real_server_pid'):
+                delattr(self, 'real_server_pid')
+            self.status_changed.emit(False)
+            
+        except Exception as e:
+            self.log_message.emit(f"强制终止进程时出错: {str(e)}")
         
     def _restart_server_impl(self):
         """在主线程中实际启动服务器的实现"""
         try:
             result = self.start_server()
-            if not result:
-                self.log_message.emit("重启服务器失败")
+            if result:
+                self.log_message.emit("✅ 服务器重启成功")
+            else:
+                self.log_message.emit("❌ 重启服务器失败")
         except Exception as e:
-            self.log_message.emit(f"重启服务器时出错: {str(e)}")
+            self.log_message.emit(f"❌ 重启服务器时出错: {str(e)}")
     
-    def _stream_server_output(self):
-        """启动日志文件监控，不再监控进程输出流"""
+    def _monitor_process_status(self):
+        """监控服务器进程状态"""
         if not self.server_process:
             return
         
@@ -424,7 +417,7 @@ class ServerManager(QObject):
             # 启动日志文件监控线程
             self._start_log_file_monitor()
             
-            # 等待进程结束，不读取输出流
+            # 在独立线程中等待进程结束
             self.server_process.wait()
             
             # 进程结束
@@ -446,10 +439,8 @@ class ServerManager(QObject):
             self.log_message.emit("已有RCON连接，先断开...")
             self.disconnect_rcon()
         
-        if not self.is_running:
-            self.log_message.emit("错误: 服务器未运行，无法连接RCON")
-            self.rcon_error.emit("服务器未运行")
-            return False
+        # 移除服务器运行状态检查，允许RCON独立连接
+        # 这样用户可以连接到任何支持RCON的服务器，不仅限于本启动器启动的服务器
             
         try:
             # 获取RCON配置
@@ -470,7 +461,7 @@ class ServerManager(QObject):
             try:
                 # 尝试连接
                 self.rcon_client.connect((rcon_addr, int(rcon_port)))
-                self.log_message.emit("RCON连接成功")
+                # TCP连接成功，但还需要进行RCON认证
             except ConnectionRefusedError:
                 self.rcon_error.emit("连接被拒绝")
                 if self.rcon_client:
@@ -510,7 +501,7 @@ class ServerManager(QObject):
             # 如果认证响应ID与请求ID匹配，则认证成功
             request_id = 1  # 与_send_rcon_packet中的request_id保持一致
             if auth_response and auth_response['id'] == request_id:
-                self.log_message.emit("RCON连接成功")
+                self.log_message.emit("RCON认证成功，连接已建立")
                 self.is_rcon_connected = True
                 self.rcon_connected.emit()
                 
@@ -798,20 +789,35 @@ class ServerManager(QObject):
                     proc_name = proc.info['name']
                     if proc_name == 'WSServer-Win64-Shipping.exe':
                         real_pid = proc.info['pid']
-                        # 不替换self.server_process，保持原始的subprocess.Popen对象用于输出流读取
+                        # 不替换self.server_process，保持原始的subprocess.Popen对象用于进程管理
                         # 只记录真实进程的PID用于其他操作
                         self.real_server_pid = real_pid
-                        self.log_message.emit(f"🔍 找到WSServer-Win64-Shipping.exe进程 PID: {real_pid}")
                         
-                        # 保持启动标志为True，等待关键字检测
-                        # 不在这里清除startup_in_progress，让它保持启动中状态
+                        # 更新启动时间为真实进程的创建时间
+                        try:
+                            real_process = psutil.Process(real_pid)
+                            self.start_time = datetime.datetime.fromtimestamp(real_process.create_time())
+                            self.log_message.emit(f"🔍 找到WSServer-Win64-Shipping.exe进程 PID: {real_pid}")
+                            self.log_message.emit(f"⏰ 更新服务器启动时间为: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                        except Exception as e:
+                            self.log_message.emit(f"⚠️ 获取进程创建时间失败: {str(e)}，使用当前时间")
+                            # 如果获取失败，保持原有的启动时间
                         
-                        # 立即设置状态为启动中
-                        self.log_message.emit("⏳ 服务器状态锁定为启动中")
-                        self.status_changed.emit(True)
+
+                            # 正常流程：等待关键字检测
+                            # 保持启动标志为True，等待关键字检测
+                            # 不在这里清除startup_in_progress，让它保持启动中状态
+                            
+                            # 立即设置状态为启动中
+                            self.log_message.emit("⏳ 服务器状态锁定为启动中")
+                            self.status_changed.emit(True)
+                            
+                            # 等待关键字检测来设置为在线
+                            self.log_message.emit("⏰ 等待检测到关键字'Create Dungeon Successed: DiXiaChengLv50, Index = 2'后设置为在线")
+                            
+                            # 启动日志文件监控
+                            self._start_log_file_monitor()
                         
-                        # 等待关键字检测来设置为在线
-                        self.log_message.emit("⏰ 等待检测到关键字'Create Dungeon Successed: DiXiaChengLv50, Index = 2'后设置为在线")
                         return
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
@@ -926,7 +932,8 @@ class ServerManager(QObject):
     def _monitor_server_log_file(self):
         """监控服务器日志文件WS.log"""
         try:
-            server_path = self.server_config.get('server_path', '')
+            # 使用self.server_path而不是从配置中获取
+            server_path = self.server_path
             if not server_path:
                 self.log_message.emit("❌ 服务器路径未配置，无法监控日志文件")
                 return
@@ -981,8 +988,10 @@ class ServerManager(QObject):
                                         self.mod_loaded.emit(mod_name, mod_id)
                                         self.log_message.emit(f"🔧 检测到MOD加载: {mod_name} (ID: {mod_id})")
                                     
-                                    # 检测服务器启动完成关键字符串
-                                    if not server_started_emitted and 'Create Dungeon Successed: DiXiaChengLv50, Index = 2' in line_text:
+                                    # 检测服务器启动完成关键字符串（仅在启动过程中检测，已有进程时跳过）
+                                    if (not server_started_emitted and 
+                                        hasattr(self, 'startup_in_progress') and self.startup_in_progress and 
+                                        'Create Dungeon Successed: DiXiaChengLv50, Index = 2' in line_text):
                                         self.log_message.emit("✅ 从WS.log检测到服务器启动完成信号：Create Dungeon Successed: DiXiaChengLv50, Index = 2")
                                         
                                         # 清除启动标志，设置为正式在线状态
@@ -1026,11 +1035,24 @@ class ServerManager(QObject):
         finally:
             self.log_monitor_running = False
     
+    def set_auto_rcon_enabled(self, enabled):
+        """设置RCON自动连接开关"""
+        self.auto_rcon_enabled = enabled
+        if enabled:
+            self.log_message.emit("✅ RCON自动连接已开启，服务器启动完成后将自动连接")
+        else:
+            self.log_message.emit("❌ RCON自动连接已关闭，需要手动连接")
+    
     def _auto_connect_rcon_after_startup(self):
         """服务器启动完成后自动连接RCON"""
-        if self.server_config.get("rcon_enabled", DEFAULT_SERVER_CONFIG['rcon_enabled']):
-            self.log_message.emit("🔗 服务器在线，尝试连接RCON...")
+        if self.auto_rcon_enabled and self.server_config.get("rcon_enabled", DEFAULT_SERVER_CONFIG['rcon_enabled']):
+            self.log_message.emit("🔗 服务器在线，尝试自动连接RCON...")
             threading.Timer(3.0, self._auto_connect_rcon).start()
+        else:
+            if not self.auto_rcon_enabled:
+                self.log_message.emit("ℹ️ RCON自动连接已关闭，请手动连接")
+            else:
+                self.log_message.emit("ℹ️ RCON未启用，无法自动连接")
     
     def _auto_connect_rcon(self):
         """自动连接RCON（在服务器启动完成后调用）"""
@@ -1042,8 +1064,12 @@ class ServerManager(QObject):
         except Exception as e:
             self.log_message.emit(f"⚠️ RCON自动连接出错: {str(e)}")
     
-    def _check_existing_process(self):
-        """检查是否有已存在的服务器进程（仅监控 WSServer-Win64-Shipping.exe）"""
+    def _check_existing_process(self, silent_mode=False):
+        """检查是否有已存在的服务器进程（仅监控 WSServer-Win64-Shipping.exe）
+        
+        Args:
+            silent_mode (bool): 静默模式，不输出"检测到已有进程"相关日志
+        """
         try:
             import psutil
             shipping_pid = None
@@ -1060,25 +1086,34 @@ class ServerManager(QObject):
             
             # 检查服务器进程状态
             if shipping_pid:
-                # 服务器进程存在，但需要等待关键字符串检测确认启动完成
+                # 服务器进程存在，直接设置为在线状态
                 process = psutil.Process(shipping_pid)
                 self.real_server_pid = shipping_pid
-                self.is_running = False  # 设置为False，等待关键字符串检测确认
+                self.is_running = True  # 直接设置为在线状态
                 self.start_time = datetime.datetime.fromtimestamp(process.create_time())
-                self.log_message.emit(f"🔍 检测到服务器进程：")
-                self.log_message.emit(f"   - WSServer-Win64-Shipping.exe PID: {shipping_pid}")
-                self.log_message.emit("⏳ 服务器状态：启动中，等待启动完成信号检测...")
-                self.log_message.emit("📋 注意：只有检测到启动关键字符串才会变为在线状态")
-                # 发射 status_changed(True) 信号，让GUI显示"启动中"状态
+                
+                if not silent_mode:
+                    self.log_message.emit("🔍 检测到已有进程，准备加载...")
+                    self.log_message.emit(f"   - WSServer-Win64-Shipping.exe PID: {shipping_pid}")
+                    self.log_message.emit("✅ 加载成功")
+                    self.log_message.emit("✅ 服务器状态：在线（检测到已有进程）")
+                
+                # 发射 status_changed(True) 信号，让GUI显示"在线"状态
                 self.status_changed.emit(True)
+                # 发射服务器启动信号
+                self.server_started.emit()
                 
                 # 启动持续日志监控
                 threading.Thread(target=self._monitor_existing_process_logs, daemon=True).start()
                 
-                # 如果启用了RCON，尝试自动连接
-                if self.server_config.get("rcon_enabled", DEFAULT_SERVER_CONFIG['rcon_enabled']):
-                    self.log_message.emit("🔗 检测到已运行的服务器，尝试连接RCON...")
-                    threading.Timer(2.0, self._auto_connect_rcon).start()
+                # 启动WS.log文件监控来读取mod信息
+                self.log_monitor_running = True
+                threading.Thread(target=self._monitor_server_log_file, daemon=True).start()
+                
+                if not silent_mode:
+                    # 检测到已有进程时，不自动尝试连接RCON，避免在RCON未启动时显示连接成功
+                    # 用户可以手动点击连接RCON按钮进行连接
+                    self.log_message.emit("💡 检测到已运行的服务器，如需使用RCON功能请手动连接")
             else:
                 # 检查是否正在启动过程中，如果是则不发送离线信号
                 if hasattr(self, 'startup_in_progress') and self.startup_in_progress:
@@ -1086,8 +1121,9 @@ class ServerManager(QObject):
                     return
                 
                 # 没有找到服务器进程且不在启动过程中
-                self.log_message.emit("🔍 [离线判断] 检查现有进程时未找到WSServer-Win64-Shipping.exe进程")
-                self.log_message.emit("❌ 未检测到服务器进程，状态：离线")
+                if not silent_mode:
+                    self.log_message.emit("🔍 [离线判断] 检查现有进程时未找到WSServer-Win64-Shipping.exe进程")
+                    self.log_message.emit("❌ 未检测到服务器进程，状态：离线")
                 self.is_running = False
                 self.status_changed.emit(False)
                 return
@@ -1141,8 +1177,8 @@ class ServerManager(QObject):
                             # 服务器进程在运行，但不自动设置为在线
                             # 只有通过关键字符串检测才能设置为在线状态
                             if not self.is_running:
-                                # 检查是否启动超时（10分钟）
-                                if hasattr(self, 'start_time'):
+                                # 只有在真正启动过程中才显示启动计时和超时检查
+                                if hasattr(self, 'startup_in_progress') and self.startup_in_progress and hasattr(self, 'start_time'):
                                     running_time = datetime.now() - self.start_time.replace(tzinfo=None)
                                     # 如果超过10分钟仍未检测到启动关键字，则认为启动失败
                                     if running_time.total_seconds() > 600:  # 10分钟 = 600秒
@@ -1152,8 +1188,7 @@ class ServerManager(QObject):
                                         self.log_message.emit("🔍 [离线判断] 服务器启动超时（超过10分钟未检测到启动完成）")
                                         
                                         # 清除启动标志
-                                        if hasattr(self, 'startup_in_progress'):
-                                            self.startup_in_progress = False
+                                        self.startup_in_progress = False
                                         
                                         self.is_running = False
                                         self.status_changed.emit(False)
@@ -1212,7 +1247,7 @@ class ServerManager(QObject):
         except Exception as e:
             self.log_message.emit(f"监控已存在进程时出错: {str(e)}")
     
-    # 已删除 _monitor_server_log_file 方法，因为 stdout 监控已足够
+    # 已删除 _monitor_server_log_file 方法，改用日志文件监控
     
     def get_server_status(self):
         """获取服务器状态"""
@@ -1228,15 +1263,32 @@ class ServerManager(QObject):
         }
         
         # 如果服务器正在运行，添加更多状态信息
-        if self.is_running and self.server_process:
+        if self.is_running:
             # 计算运行时间
-            if hasattr(self, 'start_time'):
-                uptime_seconds = int((datetime.datetime.now() - self.start_time).total_seconds())
-                hours, remainder = divmod(uptime_seconds, 3600)
-                minutes, seconds = divmod(remainder, 60)
-                status['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            if hasattr(self, 'start_time') and self.start_time:
+                try:
+                    # 确保时间计算正确，处理时区问题
+                    current_time = datetime.datetime.now()
+                    start_time = self.start_time
+                    
+                    # 如果start_time有时区信息，移除它
+                    if hasattr(start_time, 'tzinfo') and start_time.tzinfo is not None:
+                        start_time = start_time.replace(tzinfo=None)
+                    
+                    uptime_seconds = int((current_time - start_time).total_seconds())
+                    
+                    # 确保运行时间不为负数
+                    if uptime_seconds < 0:
+                        uptime_seconds = 0
+                    
+                    hours, remainder = divmod(uptime_seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    status['uptime'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                except Exception as e:
+                    # 如果计算出错，显示错误信息
+                    status['uptime'] = "计算错误"
             else:
-                status['uptime'] = "00:00:00"
+                status['uptime'] = "--:--:--"
                 
             # 获取在线玩家数量
             # 不再自动通过RCON获取玩家数量，避免频繁发送lp命令
@@ -1261,22 +1313,39 @@ class ServerManager(QObject):
                 target_pid = getattr(self, 'real_server_pid', None) or (self.server_process.pid if self.server_process else None)
                 
                 if target_pid:
-                    # 不记录内存信息到日志，只更新到GUI
-                    process = psutil.Process(target_pid)
-                    memory_info = process.memory_info()
-                    memory_mb = memory_info.rss / 1024 / 1024  # 转换为MB
-                    status['memory'] = f"{memory_mb:.2f} MB"
-                    status['memory_percent'] = min(int((memory_mb / 1000) * 100), 100)  # 假设最大内存为1000MB，确保不超过100%
+                    try:
+                        process = psutil.Process(target_pid)
+                        # 检查进程是否仍然存在且正在运行
+                        if process.is_running():
+                            memory_info = process.memory_info()
+                            memory_mb = memory_info.rss / 1024 / 1024  # 转换为MB
+                            status['memory'] = f"{memory_mb:.2f} MB"
+                            status['memory_percent'] = min(int((memory_mb / 1000) * 100), 100)  # 假设最大内存为1000MB，确保不超过100%
+                        else:
+                            # 进程已停止
+                            status['memory'] = "-- MB"
+                            status['memory_percent'] = 0
+                    except psutil.NoSuchProcess:
+                        # 进程不存在
+                        status['memory'] = "-- MB"
+                        status['memory_percent'] = 0
+                    except psutil.AccessDenied:
+                        # 权限不足
+                        status['memory'] = "权限不足"
+                        status['memory_percent'] = 0
+                    except Exception as e:
+                        # 其他异常
+                        status['memory'] = f"错误: {str(e)[:20]}"
+                        status['memory_percent'] = 0
                 else:
-                    # 不记录内存错误到日志，只更新状态
                     status['memory'] = "-- MB"
                     status['memory_percent'] = 0
-            except ImportError as e:
-                # 不记录内存导入错误到日志
+            except ImportError:
+                # psutil未安装
                 status['memory'] = "-- MB"
                 status['memory_percent'] = 0
-            except Exception as e:
-                # 不记录内存异常到日志
+            except Exception:
+                # 其他异常
                 status['memory'] = "-- MB"
                 status['memory_percent'] = 0
         else:
@@ -1286,6 +1355,8 @@ class ServerManager(QObject):
             status['memory_percent'] = 0
             
         return status
+    
+
     
     def execute_rcon_command(self, command, log_command=True, log_response=True):
         """执行RCON命令并返回结果
@@ -1305,7 +1376,7 @@ class ServerManager(QObject):
             # 发送命令
             if log_command:
                 self.log_message.emit(f"RCON已发送: {command}")
-            self._send_rcon_packet(2, command, log_command=log_command)
+            self._send_rcon_packet(2, command, log_command=False)  # 避免重复日志输出
             response = self._receive_rcon_packet(log_response=log_response)
             
             if response:
