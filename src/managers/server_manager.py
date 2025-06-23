@@ -344,9 +344,9 @@ class ServerManager(QObject):
                     else:
                         self.log_message.emit("⚠️ 部分进程可能仍在运行，继续启动")
                 
-                # 等待3秒后启动服务器
-                self.log_message.emit("等待3秒后重新启动服务器...")
-                time.sleep(3)
+                # 等待10秒后启动服务器
+                self.log_message.emit("等待10秒后重新启动服务器...")
+                time.sleep(10)
                 
                 # 在主线程中启动服务器
                 from PySide6.QtCore import QMetaObject, Qt
