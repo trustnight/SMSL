@@ -78,7 +78,7 @@
 ### 完整构建输出：
 ```
 Soul-Launcher-v1.0.0.zip
-├── Soul Launcher.exe          # 主程序
+├── SoulMask Server Launcher.exe          # 主程序
 ├── configs/                   # 配置文件目录
 ├── src/common/styles.css      # 样式文件
 └── README.txt                 # 使用说明
@@ -87,7 +87,7 @@ Soul-Launcher-v1.0.0.zip
 ### 快速构建输出：
 ```
 soul-launcher-latest/
-└── Soul Launcher.exe          # 仅主程序
+└── SoulMask Server Launcher.exe          # 仅主程序
 ```
 
 ## 🛠️ 本地构建

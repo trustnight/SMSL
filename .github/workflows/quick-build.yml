@@ -35,9 +35,9 @@ jobs:
         
     - name: 验证构建结果
       run: |
-        if (Test-Path "dist\Soul Launcher.exe") {
+        if (Test-Path "dist\SoulMask Server Launcher.exe") {
           Write-Host "✅ EXE文件构建成功"
-          $fileSize = (Get-Item "dist\Soul Launcher.exe").Length / 1MB
+          $fileSize = (Get-Item "dist\SoulMask Server Launcher.exe").Length / 1MB
           Write-Host "📦 文件大小: $([math]::Round($fileSize, 2)) MB"
         } else {
           Write-Host "❌ EXE文件构建失败"
@@ -48,7 +48,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: soul-launcher-${{ inputs.version }}
-        path: dist/Soul Launcher.exe
+        path: dist/SoulMask Server Launcher.exe
         retention-days: 7
         
     - name: 构建摘要
@@ -57,7 +57,7 @@ jobs:
         echo "" >> $env:GITHUB_STEP_SUMMARY
         echo "- **版本**: ${{ inputs.version }}" >> $env:GITHUB_STEP_SUMMARY
         echo "- **构建时间**: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" >> $env:GITHUB_STEP_SUMMARY
-        echo "- **文件名**: Soul Launcher.exe" >> $env:GITHUB_STEP_SUMMARY
+        echo "- **文件名**: SoulMask Server Launcher.exe" >> $env:GITHUB_STEP_SUMMARY
         echo "" >> $env:GITHUB_STEP_SUMMARY
         echo "### 📥 下载方式" >> $env:GITHUB_STEP_SUMMARY
         echo "在Actions页面的Artifacts部分下载构建好的EXE文件" >> $env:GITHUB_STEP_SUMMARY

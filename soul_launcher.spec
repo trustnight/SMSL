@@ -48,7 +48,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='灵魂面甲服务器启动器',
+    name='SoulMask Server Launcher',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
