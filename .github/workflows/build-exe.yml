@@ -63,7 +63,7 @@ jobs:
         Compress-Archive -Path release\* -DestinationPath "Soul-Launcher-${{ github.ref_name }}.zip"
         
     - name: 上传构建产物
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: soul-launcher-exe
         path: |
@@ -138,7 +138,7 @@ jobs:
         pyinstaller soul_launcher.spec
         
     - name: 上传跨平台构建产物
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
         path: dist/${{ matrix.executable }}
