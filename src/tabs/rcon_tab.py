@@ -261,7 +261,8 @@ class RconTab(QWidget):
         """格式化表格数据"""
         lines = text.strip().split('\n')
         if len(lines) < 2:
-            return f"<span style='color: #6c757d;'>{text.replace('\n', '<br>')}</span>"
+            br_text = text.replace('\n', '<br>')
+            return f"<span style='color: #6c757d;'>{br_text}</span>"
         
         # 构建HTML表格
         table_html = "<table style='border-collapse: collapse; width: 100%; font-family: monospace; margin: 5px 0;'>"
