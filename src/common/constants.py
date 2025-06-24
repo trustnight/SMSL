@@ -10,7 +10,7 @@ import sys
 
 # 应用程序信息
 APP_NAME = "灵魂面甲服务器启动器"
-APP_VERSION = "V0.1"
+APP_VERSION = "V0.2"
 APP_TITLE = f"{APP_NAME} {APP_VERSION}"
 
 # 获取应用程序目录的函数
