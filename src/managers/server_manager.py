@@ -417,11 +417,14 @@ class ServerManager(QObject):
             # 启动日志文件监控线程
             self._start_log_file_monitor()
             
-            # 在独立线程中等待进程结束
-            self.server_process.wait()
+            # 使用非阻塞方式检查进程状态
+            while self.server_process and self.server_process.poll() is None:
+                time.sleep(2)  # 每2秒检查一次，减少CPU占用
+                if not self.is_running:  # 如果手动停止，退出监控
+                    break
             
-            # 进程结束
-            if self.is_running:
+            # 进程结束处理
+            if self.is_running and self.server_process:
                 self.is_running = False
                 self.server_process = None
                 self.log_message.emit("🔍 [离线判断] 服务器进程已退出")
@@ -1262,8 +1265,8 @@ class ServerManager(QObject):
             'rcon_connected': self.is_rcon_connected
         }
         
-        # 如果服务器正在运行，添加更多状态信息
-        if self.is_running:
+        # 如果服务器正在运行或启动中，显示时间和内存信息
+        if self.is_running or is_starting:
             # 计算运行时间
             if hasattr(self, 'start_time') and self.start_time:
                 try:
@@ -1306,7 +1309,8 @@ class ServerManager(QObject):
                     self.log_message.emit(f"获取玩家数量时出错: {str(e)}")
                     status['players'] = "0/0"
             
-            # 获取内存使用情况
+        # 获取内存使用情况（在启动中或运行中都显示）
+        if self.is_running or is_starting:
             try:
                 import psutil
                 # 优先使用真实服务器进程PID，如果没有则使用启动进程PID
@@ -1349,6 +1353,7 @@ class ServerManager(QObject):
                 status['memory'] = "-- MB"
                 status['memory_percent'] = 0
         else:
+            # 服务器既不是运行中也不是启动中，显示默认值
             status['uptime'] = "--:--:--"
             status['players'] = "--"
             status['memory'] = "-- MB"
