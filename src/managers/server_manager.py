@@ -344,9 +344,9 @@ class ServerManager(QObject):
                     else:
                         self.log_message.emit("⚠️ 部分进程可能仍在运行，继续启动")
                 
-                # 等待10秒后启动服务器
-                self.log_message.emit("等待10秒后重新启动服务器...")
-                time.sleep(10)
+                # 等待60秒后启动服务器
+                self.log_message.emit("等待60秒后重新启动服务器...")
+                time.sleep(60)
                 
                 # 在主线程中启动服务器
                 from PySide6.QtCore import QMetaObject, Qt
@@ -900,8 +900,8 @@ class ServerManager(QObject):
                     for proc in psutil.process_iter(['pid', 'name']):
                         if proc.info['name'] == 'WSServer-Win64-Shipping.exe':
                              self.log_message.emit(f"✅ 检测到WSServer-Win64-Shipping.exe进程 PID: {proc.info['pid']}")
-                             self.log_message.emit("⏳ 等待10秒后开始监控日志文件...")
-                             time.sleep(10)  # 等待10秒
+                             self.log_message.emit("⏳ 等待30秒后开始监控日志文件...")
+                             time.sleep(30)  # 等待30秒
                              self.log_message.emit("🚀 开始监控日志文件")
                              # 启动日志监控
                              if not hasattr(self, 'log_monitor_running') or not self.log_monitor_running:
