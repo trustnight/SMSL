@@ -27,7 +27,8 @@ jobs:
       with:
         python-version: '3.11'
         
-    - name: 读取版本号并创建标签
+    - name: 读取版本号并设置环境变量
+      id: version
       run: |
         # 从constants.py文件中读取版本号
         $content = Get-Content "src\common\constants.py" -Raw
@@ -45,25 +46,31 @@ jobs:
             
             Write-Host "将创建标签: $tag"
             
-            # 配置git用户信息
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            
-            # 删除已存在的标签（如果存在）
-            git tag -d $tag 2>$null || Write-Host "标签 $tag 不存在，无需删除"
-            git push origin :refs/tags/$tag 2>$null || Write-Host "远程标签 $tag 不存在，无需删除"
-            
-            # 创建新标签
-            git tag -a $tag -m "Release $version - Auto-generated from APP_VERSION"
-            git push origin $tag
-            
             # 设置环境变量供后续步骤使用
             echo "VERSION_TAG=$tag" >> $env:GITHUB_ENV
             echo "APP_VERSION=$version" >> $env:GITHUB_ENV
+            
+            # 设置输出变量
+            echo "version-tag=$tag" >> $env:GITHUB_OUTPUT
+            echo "app-version=$version" >> $env:GITHUB_OUTPUT
         } else {
             Write-Error "无法从 src/common/constants.py 中找到 APP_VERSION"
             exit 1
         }
+        
+    - name: 创建Git标签
+      run: |
+        # 配置git用户信息
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # 删除已存在的标签（如果存在）
+        git tag -d ${{ env.VERSION_TAG }} 2>$null || Write-Host "标签 ${{ env.VERSION_TAG }} 不存在，无需删除"
+        git push origin :refs/tags/${{ env.VERSION_TAG }} 2>$null || Write-Host "远程标签 ${{ env.VERSION_TAG }} 不存在，无需删除"
+        
+        # 创建新标签
+        git tag -a ${{ env.VERSION_TAG }} -m "Release ${{ env.APP_VERSION }} - Auto-generated from APP_VERSION"
+        git push origin ${{ env.VERSION_TAG }}
         
     - name: 安装依赖
       run: |
@@ -127,7 +134,7 @@ jobs:
     - name: 压缩发布包
       run: |
         # 使用PowerShell压缩文件
-        Compress-Archive -Path release\* -DestinationPath "SoulMask-Server-Launcher-${{ env.APP_VERSION }}.zip"
+        Compress-Archive -Path release\* -DestinationPath "SoulMask-Server-Launcher-${{ steps.version.outputs.app-version }}.zip"
         
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
@@ -142,13 +149,13 @@ jobs:
     - name: 创建Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ env.VERSION_TAG }}
-        name: SoulMask Server Launcher ${{ env.APP_VERSION }}
+        tag_name: ${{ steps.version.outputs.version-tag }}
+        name: SoulMask Server Launcher ${{ steps.version.outputs.app-version }}
         files: |
           SoulMask-Server-Launcher-*.zip
           dist/SoulMask Server Launcher.exe
         body: |
-          ## SoulMask Server Launcher ${{ env.APP_VERSION }}
+          ## SoulMask Server Launcher ${{ steps.version.outputs.app-version }}
           
           ### 新功能
           - 自动构建的EXE版本
@@ -156,7 +163,7 @@ jobs:
           - 版本号自动从代码中读取
           
           ### 使用方法
-          1. 下载 `SoulMask-Server-Launcher-${{ env.APP_VERSION }}.zip` 并解压
+          1. 下载 `SoulMask-Server-Launcher-${{ steps.version.outputs.app-version }}.zip` 并解压
           2. 运行 `SoulMask Server Launcher.exe`
           3. 按照README.txt中的说明进行配置
           
