@@ -65,12 +65,12 @@ jobs:
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
         # 删除已存在的标签（如果存在）
-        git tag -d ${{ env.VERSION_TAG }} 2>$null || Write-Host "标签 ${{ env.VERSION_TAG }} 不存在，无需删除"
-        git push origin :refs/tags/${{ env.VERSION_TAG }} 2>$null || Write-Host "远程标签 ${{ env.VERSION_TAG }} 不存在，无需删除"
+        git tag -d ${{ steps.version.outputs.version-tag }} 2>$null || Write-Host "标签 ${{ steps.version.outputs.version-tag }} 不存在，无需删除"
+        git push origin :refs/tags/${{ steps.version.outputs.version-tag }} 2>$null || Write-Host "远程标签 ${{ steps.version.outputs.version-tag }} 不存在，无需删除"
         
         # 创建新标签
-        git tag -a ${{ env.VERSION_TAG }} -m "Release ${{ env.APP_VERSION }} - Auto-generated from APP_VERSION"
-        git push origin ${{ env.VERSION_TAG }}
+        git tag -a ${{ steps.version.outputs.version-tag }} -m "Release ${{ steps.version.outputs.app-version }} - Auto-generated from APP_VERSION"
+        git push origin ${{ steps.version.outputs.version-tag }}
         
     - name: 安装依赖
       run: |
